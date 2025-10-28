@@ -10,11 +10,11 @@ inputs:
     default: '.github/branch-reviewers.json'
   github-pat:
     description: 'A GitHub token for API access. Defaults to {{ github.token }}. For using teams as reviewers, a PAT with organization members read, contents read, and pull request write permissions is required.'
-    required: false
+    required: true
     default: '${{ github.token }}'
   fail-on-missing-approvals:
     description: 'Whether to fail the action if required approvals are not met.'
-    required: false
+    required: true
     default: 'false'
 outputs:
   added-user-reviewers:
