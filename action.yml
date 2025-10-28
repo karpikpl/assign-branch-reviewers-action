@@ -1,0 +1,286 @@
+# This is a reusable GitHub Actions workflow template for Assigning Branch Reviewers
+
+name: 'assign-branch-reviewers'
+description: 'Reusable composite action for assigning branch reviewers.'
+
+inputs:
+  configuration-file:
+    description: 'Path to the JSON configuration file'
+    required: true
+    default: '.github/branch-reviewers.json'
+  github-pat:
+    description: 'A GitHub token for API access. Defaults to {{ github.token }}. For using teams as reviewers, a PAT with organization members read, contents read, and pull request write permissions is required.'
+    required: false
+    default: '${{ github.token }}'
+  fail-on-missing-approvals:
+    description: 'Whether to fail the action if required approvals are not met.'
+    required: false
+    default: 'false'
+outputs:
+  added-reviewers:
+    description: 'Reviewers added to the pull request.'
+  added-team-reviewers:
+    description: 'Team reviewers added to the pull request.'
+
+runs:
+  using: 'composite'
+  steps:
+
+    - name: Load reviewer configuration
+      id: load-config
+      uses: actions/github-script@v7
+      with:
+        script: |
+          const fs = require('fs');
+
+          const config = JSON.parse(fs.readFileSync('${{ inputs.configuration-file }}', 'utf8'));
+          const baseBranch = context.payload.pull_request.base.ref;
+          
+          // Try exact match first, then regex patterns
+          let branchConfig = config.branches[baseBranch];
+          let matchedPattern = baseBranch;
+          
+          if (!branchConfig) {
+            // Try regex patterns
+            for (const [pattern, configData] of Object.entries(config.branches)) {
+              try {
+                const regex = new RegExp(pattern);
+                if (regex.test(baseBranch)) {
+                  branchConfig = configData;
+                  matchedPattern = pattern;
+                  break;
+                }
+              } catch (error) {
+                // If pattern is not a valid regex, treat it as literal string (already checked above)
+                continue;
+              }
+            }
+          }
+
+          if (!branchConfig) {
+            core.info(`ℹ️  No reviewer configuration found for branch: ${baseBranch} - skipping checks`);
+            return;
+          }
+
+          core.info(`📋 Configuration for '${baseBranch}' branch (matched pattern: '${matchedPattern}'):`);
+          if (branchConfig.reviewers) {
+            core.info(`\tRequired reviewers: ${branchConfig.reviewers.join(', ')}`);
+          }
+          if (branchConfig.teams) {
+            core.info(`\tRequired teams: ${branchConfig.teams.join(', ')}`);
+          }
+          core.info(`\tMinimum approvals: ${branchConfig.require_minimum}`);
+
+          core.setOutput('config', JSON.stringify(branchConfig));
+          core.setOutput('base-branch', baseBranch);
+          return branchConfig;
+
+    - name: Auto-assign reviewers
+      id: assign-reviewers
+      if: steps.load-config.outputs.config != ''
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-pat }}
+        script: |
+          const config = JSON.parse('${{ steps.load-config.outputs.config }}');
+          const prNumber = context.payload.pull_request.number;
+          const requiredReviewers = config.reviewers || [];
+          const requiredTeams = config.teams || [];
+
+          if (requiredReviewers.length === 0 && requiredTeams.length === 0) {
+            core.info('No reviewers or teams configured');
+            return;
+          }
+
+          // Get currently requested reviewers
+          const pr = await github.rest.pulls.get({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: prNumber
+          });
+
+          const currentReviewers = pr.data.requested_reviewers.map(r => r.login);
+          const currentTeams = pr.data.requested_teams.map(t => `${context.repo.owner}/${t.slug}`);
+          const prAuthor = pr.data.user.login;
+
+          // Find reviewers who aren't already assigned and aren't the PR author
+          const missingReviewers = requiredReviewers.filter(r =>
+            !currentReviewers.includes(r) && r !== prAuthor
+          );
+
+          // Find teams that aren't already assigned
+          const missingTeams = requiredTeams
+            .map(team => team.replace(`${context.repo.owner}/`, '')) // Remove org prefix for API
+            .filter(team => !currentTeams.some(ct => ct.endsWith(`/${team}`)));
+
+          if (missingReviewers.length > 0 || missingTeams.length > 0) {
+            const requestParams = {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber
+            };
+
+            if (missingReviewers.length > 0) {
+              requestParams.reviewers = missingReviewers;
+            }
+
+            if (missingTeams.length > 0) {
+              requestParams.team_reviewers = missingTeams;
+            }
+
+            await github.rest.pulls.requestReviewers(requestParams);
+
+            if (missingReviewers.length > 0) {
+              core.info(`✅ Added reviewers: ${missingReviewers.join(', ')}`);
+              core.setOutput('added-user-reviewers', JSON.stringify(missingReviewers));
+              core.setOutput('added-reviewers', true);
+            }
+            if (missingTeams.length > 0) {
+              core.info(`✅ Added teams: ${missingTeams.join(', ')}`);
+              core.setOutput('added-team-reviewers', JSON.stringify(missingTeams));
+              core.setOutput('added-reviewers', true);
+            }
+          } else {
+            core.info(`✅ All required reviewers and teams already assigned`);
+          }
+
+    - name: Add comment that reviewers were added
+      uses: marocchino/sticky-pull-request-comment@v2
+      if: ${{ steps.assign-reviewers.outputs.added-reviewers == 'true'}}
+      with:
+        header: 'Added Mandatory Reviewers'
+        recreate: true
+        message: |
+            ### 🚨 Mandatory reviewers were added
+            The following reviewers were added to this PR:
+            ${{
+              steps.assign-reviewers.outputs.added-user-reviewers
+                ? `\n- ${JSON.parse(steps.assign-reviewers.outputs.added-user-reviewers).join('\n- @')}`
+                : ''
+            }}
+            ${{
+              steps.assign-reviewers.outputs.added-team-reviewers
+                ? `\n\nThe following teams were added to this PR:\n- ${JSON.parse(steps.assign-reviewers.outputs.added-team-reviewers).join('\n- @')}`
+                : ''
+            }}
+
+    - name: Check required approvals
+      if: steps.load-config.outputs.config != ''
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-pat }}
+        script: |
+          const config = JSON.parse('${{ steps.load-config.outputs.config }}');
+          const prNumber = context.payload.pull_request.number;
+          const baseBranch = '${{ steps.load-config.outputs.base-branch }}';
+
+          // Get all reviews
+          const reviews = await github.rest.pulls.listReviews({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            pull_number: prNumber
+          });
+
+          // Get the latest review from each reviewer
+          const latestReviews = {};
+          for (const review of reviews.data) {
+            latestReviews[review.user.login] = review;
+          }
+
+          // Check who has approved
+          const approvers = Object.values(latestReviews)
+            .filter(review => review.state === 'APPROVED')
+            .map(review => review.user.login);
+
+          core.info(`📝 Current approvers: ${approvers.join(', ') || 'none'}`);
+
+          const requiredReviewers = config.reviewers || [];
+          const requiredTeams = config.teams || [];
+          const requireMinimum = config.require_minimum || 1;
+
+          // For teams, we need to check if any approver is a member of the required teams
+          // Since we can't easily query team membership from the workflow,
+          // we'll accept any approval for now when teams are configured
+
+          let approvedCount = 0;
+          const verifiedApprovers = [];
+
+          // Count approvals from individual reviewers
+          if (requiredReviewers.length > 0) {
+            const approvedRequiredReviewers = requiredReviewers.filter(reviewer =>
+              approvers.includes(reviewer)
+            );
+            approvedCount += approvedRequiredReviewers.length;
+            verifiedApprovers.push(...approvedRequiredReviewers);
+
+            if (approvedRequiredReviewers.length > 0) {
+              core.info(`✓ Approved by individual reviewers: ${approvedRequiredReviewers.join(', ')}`);
+            }
+          }
+
+          // For teams, verify that approvers are actually team members
+          if (requiredTeams.length > 0 && approvers.length > 0) {
+            core.info(`✓ Teams configured: ${requiredTeams.join(', ')}`);
+            core.info(`✓ Checking team membership for approvers: ${approvers.join(', ')}`);
+
+            // Check each approver's team membership
+            for (const approver of approvers) {
+              // Skip if already counted as an individual reviewer
+              if (verifiedApprovers.includes(approver)) {
+                continue;
+              }
+
+              // Check if approver is a member of any required team
+              let isTeamMember = false;
+              for (const teamSlug of requiredTeams) {
+                const teamName = teamSlug.replace(`${context.repo.owner}/`, '');
+
+                try {
+                  await github.rest.teams.getMembershipForUserInOrg({
+                    org: context.repo.owner,
+                    team_slug: teamName,
+                    username: approver
+                  });
+
+                  core.info(`✓ ${approver} is a member of ${teamSlug}`);
+                  isTeamMember = true;
+                  break; // Found membership, no need to check other teams
+                } catch (error) {
+                  // Not a member of this team, continue checking
+                  core.info(`  ${approver} is not a member of ${teamSlug}`);
+                }
+              }
+
+              if (isTeamMember) {
+                approvedCount++;
+                verifiedApprovers.push(approver);
+              }
+            }
+
+            if (verifiedApprovers.length > (requiredReviewers.length > 0 ? requiredReviewers.filter(r => approvers.includes(r)).length : 0)) {
+              const teamApprovers = verifiedApprovers.filter(a => !requiredReviewers.includes(a));
+              core.info(`✓ Verified team member approvals: ${teamApprovers.join(', ')}`);
+            }
+          }
+
+          core.info(`✓ Approval count: ${approvedCount}/${requireMinimum} required`);
+
+          if (approvedCount < requireMinimum) {
+            let message = `❌ Merge blocked: Need ${requireMinimum} approval(s) for '${baseBranch}' branch.\n`;
+
+            if (requiredReviewers.length > 0) {
+              const stillNeeded = requiredReviewers.filter(r => !approvers.includes(r));
+              message += `Required reviewers: ${requiredReviewers.join(', ')}\n`;
+              message += `Still need approval from: ${stillNeeded.join(', ')}\n`;
+            }
+
+            if (requiredTeams.length > 0) {
+              message += `Required teams: ${requiredTeams.join(', ')}\n`;
+            }
+
+            message += `Progress: ${approvedCount}/${requireMinimum}`;
+
+            core.setFailed(message);
+          } else {
+            core.info(`✅ All approval requirements met! (${approvedCount}/${requireMinimum})`);
+          }
