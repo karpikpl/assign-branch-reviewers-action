@@ -160,12 +160,12 @@ runs:
             await github.rest.pulls.requestReviewers(requestParams);
 
             if (missingReviewers.length > 0) {
-              core.info(`✅ Added reviewers: ${missingReviewers.join(', ')}`);
+              core.info(`✅ Added reviewers: ${missingReviewers.map(r => `@${r}`).join(', ')}`);
               core.setOutput('added-user-reviewers', JSON.stringify(missingReviewers));
               core.setOutput('added-reviewers', true);
             }
             if (missingTeams.length > 0) {
-              core.info(`✅ Added teams: ${missingTeams.join(', ')}`);
+              core.info(`✅ Added teams: ${missingTeams.map(t => `@${t}`).join(', ')}`);
               core.setOutput('added-team-reviewers', JSON.stringify(missingTeams));
               core.setOutput('added-reviewers', true);
             }
@@ -182,16 +182,8 @@ runs:
         message: |
             ### 🚨 Mandatory reviewers were added
             The following reviewers were added to this PR:
-            ${{
-              steps.assign-reviewers.outputs.added-user-reviewers
-                ? `\n- ${JSON.parse(steps.assign-reviewers.outputs.added-user-reviewers).join('\n- @')}`
-                : ''
-            }}
-            ${{
-              steps.assign-reviewers.outputs.added-team-reviewers
-                ? `\n\nThe following teams were added to this PR:\n- ${JSON.parse(steps.assign-reviewers.outputs.added-team-reviewers).join('\n- @')}`
-                : ''
-            }}
+            - User Reviewers: ${{steps.assign-reviewers.outputs.added-user-reviewers}}
+            - Team Reviewers: ${{steps.assign-reviewers.outputs.added-team-reviewers}}
 
     - name: Check required approvals
       if: steps.load-config.outputs.config != ''
