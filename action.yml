@@ -161,12 +161,12 @@ runs:
 
             if (missingReviewers.length > 0) {
               core.info(`✅ Added reviewers: ${missingReviewers.map(r => `@${r}`).join(', ')}`);
-              core.setOutput('added-user-reviewers', ${missingReviewers.map(r => `@${r}`).join(', ')});
+              core.setOutput('added-user-reviewers', `${missingReviewers.map(r => `@${r}`).join(', ')}`);
               core.setOutput('added-reviewers', true);
             }
             if (missingTeams.length > 0) {
               core.info(`✅ Added teams: ${missingTeams.map(t => `@${t}`).join(', ')}`);
-              core.setOutput('added-team-reviewers', ${missingTeams.map(t => `@${t}`).join(', ')});
+              core.setOutput('added-team-reviewers', `${missingTeams.map(t => `@${t}`).join(', ')}`);
               core.setOutput('added-reviewers', true);
             }
           } else {
