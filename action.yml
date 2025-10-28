@@ -36,23 +36,50 @@ runs:
           const config = JSON.parse(fs.readFileSync('${{ inputs.configuration-file }}', 'utf8'));
           const baseBranch = context.payload.pull_request.base.ref;
           
-          // Try exact match first, then regex patterns
+          // Simple pattern matcher with * wildcard
+          function simpleMatch(pattern, text) {
+            if (!pattern.includes('*')) {
+              return pattern === text; // Exact match
+            }
+            
+            if (pattern.startsWith('*') && pattern.endsWith('*')) {
+              // *substring* - contains
+              const substring = pattern.slice(1, -1);
+              return text.includes(substring);
+            }
+            
+            if (pattern.startsWith('*')) {
+              // *suffix - ends with
+              const suffix = pattern.slice(1);
+              return text.endsWith(suffix);
+            }
+            
+            if (pattern.endsWith('*')) {
+              // prefix* - starts with
+              const prefix = pattern.slice(0, -1);
+              return text.startsWith(prefix);
+            }
+            
+            // Handle middle wildcards: prefix*suffix
+            const parts = pattern.split('*');
+            if (parts.length === 2) {
+              return text.startsWith(parts[0]) && text.endsWith(parts[1]);
+            }
+            
+            return false;
+          }
+          
+          // Try exact match first, then patterns
           let branchConfig = config.branches[baseBranch];
           let matchedPattern = baseBranch;
           
           if (!branchConfig) {
-            // Try regex patterns
+            // Try wildcard patterns
             for (const [pattern, configData] of Object.entries(config.branches)) {
-              try {
-                const regex = new RegExp(pattern);
-                if (regex.test(baseBranch)) {
-                  branchConfig = configData;
-                  matchedPattern = pattern;
-                  break;
-                }
-              } catch (error) {
-                // If pattern is not a valid regex, treat it as literal string (already checked above)
-                continue;
+              if (simpleMatch(pattern, baseBranch)) {
+                branchConfig = configData;
+                matchedPattern = pattern;
+                break;
               }
             }
           }
