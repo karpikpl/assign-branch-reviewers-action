@@ -23,6 +23,8 @@ name: Auto Assign Reviewers
 on:
   pull_request:
     types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted, dismissed]
 
 jobs:
   assign-reviewers:
@@ -35,7 +37,7 @@ jobs:
         uses: actions/checkout@v4
         
       - name: Assign Branch Reviewers
-        uses: your-org/github-reviewers-action@v1
+        uses: karpikpl/assign-branch-reviewers-action@main
 ```
 
 ### With Custom PAT (Required for Teams)
@@ -44,7 +46,7 @@ For team reviewers, you need a PAT with appropriate permissions:
 
 ```yaml
       - name: Assign Branch Reviewers
-        uses: your-org/github-reviewers-action@v1
+        uses: karpikpl/assign-branch-reviewers-action@main
         with:
           configuration-file: '.github/branch-reviewers.json'
           github-pat: ${{ secrets.REVIEWER_PAT }}
@@ -65,7 +67,7 @@ For team reviewers, you need a PAT with appropriate permissions:
 
 | Output | Description |
 |--------|-------------|
-| `added-reviewers` | Boolean indicating if reviewers were added |
+| `added-user-reviewers` | Boolean indicating if reviewers were added |
 | `added-team-reviewers` | JSON array of team reviewers that were added |
 
 ## Configuration File Format

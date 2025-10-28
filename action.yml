@@ -17,10 +17,12 @@ inputs:
     required: false
     default: 'false'
 outputs:
-  added-reviewers:
-    description: 'Reviewers added to the pull request.'
+  added-user-reviewers:
+    description: 'User reviewers added to the pull request.'
+    value: ${{ steps.assign-reviewers.outputs.added-user-reviewers }}
   added-team-reviewers:
     description: 'Team reviewers added to the pull request.'
+    value: ${{ steps.assign-reviewers.outputs.added-team-reviewers }}
 
 runs:
   using: 'composite'
